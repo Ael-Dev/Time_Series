@@ -1,0 +1,277 @@
+---
+title: "Datos Macroeconónicos de EEUU"
+output:
+  html_document:
+    df_print: paged
+  pdf_document: default
+  html_notebook: default
+---
+By: Ael-Dev
+
+## Descripción de los Datos
+
+Los datos macroeconómicos de Estados Unidos proporcionan información crucial sobre variables como el Producto Interno Bruto (GDP), tasas de interés, desempleo, entre otros indicadores económicos clave.
+
+```{r, echo = FALSE}
+#library(data.table)
+#data <- fread('https://raw.githubusercontent.com/ecabestadistica/series-temporales-multivariantes/master/2.%20Casos%20de%20estudio%20en%20R/A.%20Datos%20macroecon%C3%B3micos%20de%20USA/blanchQua.csv')
+#head(data)
+```
+
+```{r, echo = FALSE}
+#install.packages("vars")
+#install.packages("MTS")
+#??vars
+#??MTS
+#install.packages("ggfortify")
+#install.packages("rlang")
+```
+
+
+## Importar paquetes en R
+```{r}
+# lectura del dataset
+library(readr)
+
+# test ADF de estacionariedad
+library(tseries)
+
+# plot
+library(ggplot2)
+library(ggfortify)
+
+## Dividir la serie en conjunto de entrenamiento y de prueba
+library(dplyr)
+```
+
+## Cargando los datos
+```{r}
+data <- read_csv('https://raw.githubusercontent.com/ecabestadistica/series-temporales-multivariantes/master/2.%20Casos%20de%20estudio%20en%20R/A.%20Datos%20macroecon%C3%B3micos%20de%20USA/blanchQua.csv',
+                 col_types = cols(
+                                   dates = col_double(),
+                                   GDP = col_double(),
+                                   U = col_double()
+                                   )
+                 )
+head(data)
+```
+
+```{r}
+class(data)
+```
+
+## Análisis exploratorio de los datos
+```{r}
+# Convertir a objeto ts
+gdp <- ts(data$GDP, start = c(1948, 2), freq = 4) # 4 trimestres
+une <- ts(data$U, start = c(1948, 2), freq = 4)
+```
+
+
+```{r}
+# Gráfico con plot:
+data.bv <- cbind(gdp, une)
+plot(data.bv)
+```
+
+```{r}
+
+library(ggplot2)
+#install.packages("ggfortify")
+library(ggfortify)
+autoplot(data.bv )
+```
+
+```{r}
+
+## Dividir la serie en conjunto de entrenamiento y de prueba
+library(dplyr)
+
+n_obs=10
+end=dim(data.bv)[1]
+X_train = data.bv[1:(end-n_obs),]
+X_test = data.bv[(end-n_obs+1):end,]
+dim(X_test)
+
+```
+
+
+```{r}
+####### Prueba de estacionariedad
+apply(X_train, 2, adf.test) #2 para especificar que lo queremos aplicar por columnas
+```
+#### Todos los p-values son < 0.05, => no hay que diferenciar las series
+
+## Creando el modelo VAR
+```{r}
+# Identificación del orden del modelo
+library(vars)
+VARselect(X_train, type = "none", lag.max = 10)
+```
+
+
+#### Seleccionaremos el criterio AIC, el cual nos indica un VAR de orden 2
+```{r}
+# Creando el modelo
+var.a <- vars::VAR(X_train,
+                   
+                   lag.max = 10,
+                   
+                   ic = "AIC",
+                   
+                   type = "const")
+
+summary(var.a)
+```
+
+
+## Causalidad de Granger 
+```{r}
+# verificar si estas 2 series estan correlacionadas
+causality(var.a, cause = c("gdp"))
+causality(var.a, cause = c("une"))
+```
+dado que los p-values <0.05,  => hay presencia de una causalidad bidireccional
+
+```{r}
+## Diagnosis del modelo (Portmanteau test para objetos var) o analisis de sus residuos, donde la funcion permite realizar un test de hipotesis de los residuos.
+
+# Deseamos obtener un p-valor > 0.05.
+
+# Posibles soluciones si es < 0.05:
+# a) Cambiar el orden del modelo.
+# b) Cambiar el tipo de modelo.
+# c) Añadir otro paso de diferenciación o transformar con logaritmos.
+
+bv.serial= serial.test(var.a)
+bv.serial
+```
+en este caso el p-value > 0.5 por lo que cumple lo que se buscaba.
+
+
+
+```{r}
+# ploteando la diagnosis
+plot(bv.serial, names = "gdp")
+plot(bv.serial, names = "une")
+
+```
+
+## Forecasting usando el modelo VAR (Hallando los pronósticos)
+
+### Respecto a GDP
+```{r}
+predictions <- predict(var.a, n.ahead = 10, ci = 0.95)
+plot(predictions, names = "gdp")
+```
+
+### Respecto a une
+```{r}
+predictions <- predict(var.a, n.ahead = 10, ci = 0.95)
+plot(predictions, names = "une")
+```
+
+
+```{r}
+
+# OTRA FORMA DE GRAFICAR
+fanchart(predictions, names = "gdp")
+fanchart(predictions, names = "une")
+```
+
+## Evaluación del modelo
+```{r}
+pred=predictions$fcst
+rmse=sqrt(mean((X_test[,1]-pred$gdp)^2))
+cat('RMSE gdp: ', rmse)
+rmse=sqrt(mean((X_test[,2]-pred$une)^2))
+cat('RMSE une: ', rmse)
+```
+se observa que se obtiene resultados aceptables teniendo en cuenta que se observa 2 datos en el pasado
+
+
+## Reentrenando el modelo con todos los datos
+```{r}
+# Identificación del orden del modelo
+VARselect(data.bv, type = "none", lag.max = 10)
+
+
+# Creando el modelo
+var.a <- vars::VAR(data.bv,
+                   lag.max = 10,
+                   ic = "AIC",
+                   type = "const")
+
+summary(var.a)
+```
+
+
+```{r}
+# Causalidad de Granger 
+causality(var.a, cause = c("gdp"))
+causality(var.a, cause = c("une"))
+
+```
+
+```{r}
+## Diagnosis del modelo (Portmanteau test para objetos var)
+
+bv.serial= serial.test(var.a)
+bv.serial
+```
+pasa la prueba
+
+
+```{r}
+# graficando la diagnosis
+plot(bv.serial, names = "gdp")
+plot(bv.serial, names = "une")
+```
+
+```{r}
+# Forecasting usando el modelo VAR (Hallando los pronósticos)
+predictions <- predict(var.a, n.ahead = 15, ci = 0.95)
+plot(predictions, names = "gdp")
+
+predictions <- predict(var.a, n.ahead = 15, ci = 0.95)
+plot(predictions, names = "une")
+```
+
+```{r}
+# Otro gráfico 
+fanchart(predictions, names = "gdp")
+fanchart(predictions, names = "une")
+```
+## Más predicciones hacia el futuro
+```{r}
+# "n.ahead = 50" (perdemos precisión)
+predictions <- predict(var.a, n.ahead = 50, ci = 0.95)
+plot(predictions, names = "gdp")
+
+predictions <- predict(var.a, n.ahead = 50, ci = 0.95)
+plot(predictions, names = "une")
+```
+Se observa que se pierde precisión(capacidad predictiva)
+
+
+```{r}
+# Otro gráfico 
+fanchart(predictions, names = "gdp")
+fanchart(predictions, names = "une")
+```
+## Calcular el tamaño de los intervalos de confianza
+```{r}
+# preferentemente un 95% de confianza
+diff_IC_gdp=predictions$fcst$gdp[,3]-predictions$fcst$gdp[,2] # retorna los intervalos de confianza
+plot(diff_IC_gdp, main="Longitud de los IC vs cantidad de pronósticos a futuro - GDP", xlab='Cantidad de datos pronosticados en el futuro', ylab='Longitud del IC')
+```
+El gráfico indica que no se debería pronosticar más de 12 datos al futuro con este modelo.
+
+
+```{r}
+diff_IC_une=predictions$fcst$gdp[,3]-predictions$fcst$une[,2]
+plot(diff_IC_une, main="Longitud de los IC vs cantidad de pronósticos a futuro - UNE", xlab='Cantidad de datos pronosticados en el futuro', ylab='Longitud del IC')
+```
+El gráfico indica que no se debería pronosticar más de 12 o 16 datos al futuro con este modelo.
+
+De los gráficos se observa que cuantos más datos al futuro pronosticamos, mayor error se obtiene, perdiendo la precision.
