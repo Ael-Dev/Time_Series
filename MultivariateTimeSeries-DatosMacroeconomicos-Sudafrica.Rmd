@@ -1,0 +1,234 @@
+---
+title: "DATOS MACROECONOMICOS DE SUDÁFRICA"
+output:
+  html_document:
+    df_print: paged
+---
+
+By: Ael-Dev
+
+
+
+## Diccionario de variables:
+  - GDP (PIB)
+  - INF (tasa de inflación)
+  - INT (tasa de interés)
+
+## Leer dataset
+```{r}
+library(readr)
+
+data <- read_csv('https://raw.githubusercontent.com/ecabestadistica/series-temporales-multivariantes/master/2.%20Casos%20de%20estudio%20en%20R/B.%20Datos%20macroecon%C3%B3micos%20de%20Sud%C3%A1frica/data_sa.csv',
+                 col_types = cols(
+                                   dates = col_double(),
+                                   GDP = col_double(),
+                                   U = col_double()
+                                   )
+                 )
+head(data)
+
+```
+Se observa que los datos son trimestrales
+
+## Análisis exploratorio de los datos (EDA)
+```{r}
+library(tseries)
+
+# Convertir las series a objeto ts
+gdp <- ts(data$gdp, start = c(1981, 2), freq = 4) # Se establece el inicio en el año 1981, segundo trimestre, con una frecuencia de 4 (trimestral).
+inf <- ts(data$inf, start = c(1981, 2), freq = 4)
+int <- ts(data$int, start = c(1981, 2), freq = 4)
+
+
+```
+
+```{r}
+dat.mts=cbind(gdp, inf, int)  # Combinar series en matriz dat.mts
+
+plot(dat.mts)  # Graficar las series temporales
+```
+
+```{r}
+
+# Con autoplot:
+library(ggplot2)  # Cargar librería ggplot2
+library(ggfortify)  # Cargar librería ggfortify
+
+autoplot(dat.mts)  # Generar gráfico con ggplot2
+```
+
+## Dividir la serie en conjunto de entrenamiento y prueba
+```{r}
+
+library(dplyr)
+
+n_obs=10 # nro de obs
+end=dim(dat.mts)[1] # indice final del ultimo dato del dataset
+X_train = dat.mts [1:(end-n_obs),]  # Crear conjunto de entrenamiento
+X_test = dat.mts [(end-n_obs+1):end,]  # Crear conjunto de prueba
+dim(X_test)  # Mostrar dimensiones de X_test
+
+```
+Se obtiene 10 datos reservados y 3 columnas
+
+
+## Prueba de estacionariedad
+
+- H0: Serie = Estacionria
+- H1: Serie != Estacionaria
+```{r}
+apply(X_train, 2, adf.test)  # Realizar prueba ADF por columnas en X_train
+```
+* Se observa que GDP e INT no son estacionarias.
+* INF si es estacionaria
+
+
+## Estudiar un modelo para ver la relación entre la tasa de inflación y la tasa de interés INF e INT
+```{r}
+# para así que obviar el hecho 
+# de que GDP no sea estacionaria porque no la vamos a utilizar
+X_train_new <- X_train[,2:3]  # Seleccionar columnas relevantes para el modelo
+```
+
+
+## VAR modeling
+```{r}
+# Identificación del orden del modelo
+library(vars)
+VARselect(X_train_new, type = "none", lag.max = 12)  # Seleccionar orden del modelo VAR
+```
+Según el criterio AIC es que se debe considerar hasta 3 retrasos (orden 3)
+
+
+## Creando el modelo VAR
+```{r}
+var.a <- vars::VAR(X_train_new,
+                   
+                   lag.max = 10, # max retrasos
+                   
+                   ic = "AIC", # criterio 
+                   
+                   type = "const")  # Crear modelo VAR
+
+summary(var.a)  # Resumen del modelo
+```
+## Diagnosis del modelo (Portmanteau test para objetos var)
+```{r}
+bv.serial= serial.test(var.a)  # Realizar test Portmanteau
+bv.serial
+```
+P-value es > 0.05, por lo que no es necesario realizar la diferenciación
+
+
+## Grafico de la diagnosis
+```{r}
+plot(bv.serial, names = "int")  # Graficar resultados para variable int
+plot(bv.serial, names = "inf")  # Graficar resultados para variable inf
+```
+## Forecasting
+
+```{r}
+predictions <- predict(var.a, n.ahead = 10, ci = 0.90)  # Realizar pronósticos a 10 periodos con intervalo de confianza del 90%
+plot(predictions, names = "int")  # Graficar pronósticos para variable int
+
+```
+
+```{r}
+predictions <- predict(var.a, n.ahead = 10, ci = 0.90)  # Realizar pronósticos a 10 periodos en el futuro, con intervalo de confianza del 90%
+plot(predictions, names = "inf")  # Graficar pronósticos para variable inf
+```
+
+```{r}
+# Otro gráfico 
+fanchart(predictions, names = "int")  # Gráfico adicional para variable int
+fanchart(predictions, names = "inf")  # Gráfico adicional para variable inf
+
+```
+
+## Evaluación del modelo
+```{r}
+pred=predictions$fcst
+rmse=sqrt(mean((X_test[,2]-pred$inf)^2))
+cat('RMSE inf: ', rmse)
+
+```
+```{r}
+rmse=sqrt(mean((X_test[,3]-pred$int)^2))
+cat('RMSE int: ', rmse)
+```
+Se observa que los resultdos para RMSE son aceptables
+
+
+## Entrenando con todos los datos
+```{r}
+# Creando el modelo VAR con todas las variables relevantes
+var.a <- vars::VAR(dat.mts[,2:3],
+                   
+                   lag.max = 10,
+                   
+                   ic = "AIC",
+                   
+                   type = "const")  # Crear modelo VAR con todas las variables relevantes
+
+summary(var.a)  # Resumen del nuevo modelo
+```
+
+```{r}
+## Diagnosis del modelo (Portmanteau test para objetos var)
+bv.serial= serial.test(var.a)  # Realizar test Portmanteau nuevamente
+
+plot(bv.serial, names = "int")  # Graficar resultados para variable int
+plot(bv.serial, names = "inf")  # Graficar resultados para variable inf
+
+```
+
+
+```{r}
+## Forecasting usando el modelo VAR (Hallando los pronósticos)
+predictions <- predict(var.a, n.ahead = 10, ci = 0.95)  # Realizar pronósticos a futuro con intervalo de confianza del 95%
+plot(predictions, names = "int")  # Graficar pronósticos para variable int
+
+
+```
+
+
+```{r}
+## Forecasting usando el modelo VAR (Hallando los pronósticos)
+predictions <- predict(var.a, n.ahead = 10, ci = 0.95)   # Realizar pronósticos a futuro con intervalo de confianza del 95%
+plot(predictions, names = "inf")   # Graficar pronósticos para variable inf
+
+```
+
+
+```{r}
+## Más adelante en el futuro "n.ahead=50"
+predictions <- predict(var.a, n.ahead = 50, ci = 0.95)   # Realizar pronósticos a futuro con intervalo de confianza del 95%
+plot(predictions, names = "int")   # Graficar pronósticos para variable int
+
+```
+
+
+```{r}
+#"n.ahead=50"
+predictions <- predict(var.a, n.ahead = 50, ci = 0.95)   # Realizar pronósticos a futuro con intervalo de confianza del 95%
+plot(predictions, names = "inf")   # Graficar pronósticos para variable inf
+
+```
+
+## Tamaño de los intervalos de confianza
+```{r}
+
+diff_IC_int=predictions$fcst$int[,3]-predictions$fcst$int[,2]   # Calcular longitud de IC para variable int
+plot(diff_IC_int, main="Longitud de los IC vs cantidad de pronósticos a futuro - INT", xlab='Cantidad de datos pronosticados en el futuro', ylab='Longitud del IC')   # Graficar longitud de IC vs cantidad de pronósticos futuros para variable int
+
+```
+Cantidad de datos a futuro a predecir 8 a 10.
+
+```{r}
+
+diff_IC_inf=predictions$fcst$inf[,3]-predictions$fcst$inf[,2]   # Calcular longitud de IC para variable inf
+plot(diff_IC_inf, main="Longitud de los IC vs cantidad de pronósticos a futuro - INF", xlab='Cantidad de datos pronosticados en el futuro', ylab='Longitud del IC')   # Graficar longitud de IC vs cantidad de pronósticos futuros para variable inf
+```
+Cantidad de posibles valores a futuro a predecir 10
+
+* A mayor cantidad de datos al futuro a predecir mayor error, por lo tanto se perderá precisión y poder predictivo
