@@ -1,0 +1,323 @@
+---
+title: "DATOS MACROECONOMICOS DE FILIPINAS"
+output:
+  html_document:
+    df_print: paged
+  pdf_document: default
+---
+
+By: Ael-Dev
+
+
+
+## Diccionario de variables:
+  - date: Representa la fecha en la que se registraron los datos.
+  - real_gdp_growth: Indica el crecimiento real del Producto Interno Bruto (PIB). 
+  - psei: Corresponde al índice compuesto de la Bolsa de Filipinas. 
+  - bsp_rrp: Refiere a la tasa de interés de referencia del Banco Central de Filipinas.
+  - unem: Representa la tasa de desempleo en Filipinas.
+
+## Leer dataset
+```{r}
+library(readr)
+
+data <- read_csv('https://raw.githubusercontent.com/ecabestadistica/series-temporales-multivariantes/master/2.%20Casos%20de%20estudio%20en%20R/C.%20Datos%20macroecon%C3%B3micos%20de%20Filipinas/SampleVAR.csv',
+                 col_types = cols(
+                  #                 date = col_double(),
+                                   real_gdp_growth = col_double(),
+                                   psei = col_double(),
+                                   bsp_rrp = col_double(),
+                                   unem = col_double()
+                                   )
+                 )
+class(data)
+head(data)
+
+```
+
+
+## Análisis exploratorio
+```{r}
+#library(tseries)
+
+# Convertir a objeto ts las dos series
+rgdp <- ts(data$real_gdp_growth, start = c(1999,1), frequency = 4)
+psei <- ts(data$psei, start = c(1999,1), frequency = 4)
+bsp <- ts(data$bsp_rrp, start = c(1999,1), frequency = 4)
+unem <- ts(data$unem, start = c(1999,1), frequency = 4)
+```
+
+
+```{r}
+# Gráfico con plot:
+dat.mv <- cbind(rgdp, psei, bsp, unem) # union
+plot(dat.mv )
+```
+
+
+## Dividir la serie en conjunto de entrenamiento y de prueba
+```{r}
+library(dplyr)
+
+n_obs=10
+end=dim(dat.mv)[1]
+X_train = dat.mv [1:(end-n_obs),]
+X_test = dat.mv [(end-n_obs+1):end,]
+dim(X_test)
+```
+
+## Prueba de estacionariedad
+```{r}
+# Check if the 'zoo' package is attached
+if ("zoo" %in% search()) {
+  # Detach the 'zoo' package
+  detach("package:zoo", unload = TRUE)
+} else {
+  message("Package 'zoo' is not currently attached.")
+}
+
+# Load the 'zoo' package
+library(zoo)
+```
+
+
+```{r}
+library(tseries)
+apply(X_train, 2, adf.test) #2 aplicar por columnas
+```
+
+De los resultados obtenidos, se concluye que la mayoria de las series no son estacionarias, por lo que se sugiere diferenciar.
+
+
+```{r}
+# Diferenciamos
+library(MTS)
+stnry = diffM(X_train)
+```
+
+
+```{r}
+# Volviendo a realizar el test:
+apply(stnry, 2, adf.test)
+```
+
+Se observa que todas las series son estacionarias.
+
+
+## MODELO VAR
+```{r}
+# Identificación del orden del modelo
+library(vars)
+VARselect(stnry, type = "none", lag.max = 10)
+```
+
+Basado en el criterio AIC, la sugerencia que brinda es que se debe considerar 1 retraso(1 orden).
+
+```{r}
+# Creando el modelo
+var.a <- vars::VAR(stnry,
+                   
+                   lag.max = 10,
+                   
+                   ic = "AIC",
+                   
+                   type = "none")
+
+summary(var.a)
+```
+
+Se observa que las ecuaciones consideran 1 retraso de cada serie.
+
+
+## Diagnosis del modelo (Portmanteau test para objetos var)
+```{r}
+mv.serial=serial.test(var.a)
+mv.serial
+plot(mv.serial, names = "rgdp")
+plot(mv.serial, names = "psei")
+plot(mv.serial, names = "bsp")
+plot(mv.serial, names = "unem")
+```
+
+El p-value > 0.05, por lo tanto, cumple la diagnosis del modelo
+
+## Forecasting usando el modelo VAR (Hallando los pronósticos)
+```{r}
+# Redefinir los márgenes de la figura
+par(mar = c(3, 3, 2, 1))
+fcast = predict(var.a, n.ahead = 10)
+plot(fcast)
+```
+
+
+```{r}
+## Forecast gold
+rgdp_pred = fcast$fcst[1]; # recuperar la columna correspondiente a las preds.
+rgdp_pred 
+```
+
+
+```{r}
+# Extrayendo la columna de pronósticos (CASO RGDP)
+x = rgdp_pred$rgdp[,1]; 
+x
+
+```
+
+
+```{r}
+# Mostrar los ultimos valores RGDP
+tail(X_train)
+```
+
+se observa que el ultimo valor de rgdp es 7.
+
+```{r}
+# Invirtiendo la diferenciación sobre rgdp
+x = cumsum(x) + 7
+
+plot.ts(x)
+```
+
+
+```{r}
+# Mostrar los datos reales en la escala original
+# Combinando los datos reales y la predicción en una sola serie de tiempo
+rgdpinv =ts(c(X_train[,1], x),
+            start = c(1999,1), frequency = 4)
+
+# Dibujando todo 
+plot(rgdpinv)
+plot.ts(rgdpinv[50:80])
+```
+
+
+```{r}
+# Plot avanzado con separación visual entre lo real y lo pronosticado
+library(lattice)
+library(grid)
+library(zoo)
+
+# Objeto zoo
+xx = zoo(rgdpinv[50:80])
+```
+
+
+```{r}
+xyplot(xx, grid=TRUE, panel = function(xx, y, ...){
+  
+  panel.xyplot(xx, y, col="red", ...)
+  
+  grid.clip(unit(20, "native"), just=c("right")) 
+  
+  panel.xyplot(xx, y, col="green", ...) })
+```
+
+
+```{r}
+### Evaluacion del modelo "rgdp"
+rmse=sqrt(mean((X_test[,1]-x)^2))
+rmse
+```
+
+El valor de RMSE (Root Mean Square Error o Raíz del Error Cuadrático Medio) de 0.9860489 para los datos macroeconómicos del RGDP (Producto Interno Bruto Real) de Filipinas es relativamente bajo, lo que sugiere que el modelo de predicción tiene un buen ajuste a los datos históricos. Un RMSE bajo indica que las diferencias entre los valores predichos por el modelo y los valores reales observados son, en promedio, pequeñas.
+
+En el contexto de los datos macroeconómicos, un RMSE cercano a 1 podría significar que el modelo es capaz de predecir el RGDP con un margen de error cercano a una unidad de la medida utilizada. Esto es particularmente útil para los formuladores de políticas y analistas económicos, ya que proporciona una herramienta confiable para la planificación y el análisis económico.
+
+```{r}
+## Forecast psei
+psei_pred = fcast$fcst[2]; # recuperar la columna correspondiente a las preds.
+psei_pred 
+```
+
+```{r}
+# Extrayendo la columna de pronósticos (CASO PSEI)
+x = psei_pred$psei[,1]; 
+x
+
+```
+
+
+```{r}
+# Mostrar los ultimos valores PSEI
+tail(X_train)
+```
+
+se observa que el ultimo valor de rgdp es 7796.25
+
+```{r}
+# Invirtiendo la diferenciación sobre psei
+x = cumsum(x) + 7796.25
+
+plot.ts(x)
+```
+
+
+```{r}
+# Mostrar los datos reales en la escala original
+# Combinando los datos reales y la predicción en una sola serie de tiempo
+pseiinv =ts(c(X_train[,2], x),
+            start = c(1999,1), frequency = 4)
+
+# Dibujando todo 
+plot(pseiinv)
+plot.ts(pseiinv[50:80])
+```
+
+
+```{r}
+# Plot avanzado con separación visual entre lo real y lo pronosticado
+library(lattice)
+library(grid)
+library(zoo)
+
+# Objeto zoo
+xx = zoo(pseiinv[50:80])
+```
+
+
+```{r}
+xyplot(xx, grid=TRUE, panel = function(xx, y, ...){
+  
+  panel.xyplot(xx, y, col="red", ...)
+  
+  grid.clip(unit(20, "native"), just=c("right")) 
+  
+  panel.xyplot(xx, y, col="green", ...) })
+```
+
+
+```{r}
+### Evaluacion del modelo "rgdp"
+rmse=sqrt(mean((X_test[,2]-x)^2))
+rmse
+```
+
+ El resultado sugiere que el modelo tiene una precisión aceptable para las predicciones.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
