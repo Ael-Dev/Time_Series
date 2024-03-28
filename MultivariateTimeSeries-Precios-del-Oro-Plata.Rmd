@@ -1,0 +1,277 @@
+---
+title: "PRECIOS DEL ORO Y LA PLATA"
+output:
+  html_document:
+    df_print: paged
+  pdf_document: default
+---
+
+By: Ael-Dev
+
+
+
+## Diccionario de variables:
+
+    "Date": Fecha en la que se registró el precio
+    "gold": Precio del oro en la fecha dada
+    "silver": Precio de la plata en la fecha dada
+    "plat": Precio del platino en la fecha dada
+    "pall": Precio del paladio en la fecha dada
+
+## Leer dataset
+
+```{r}
+library(readr)
+
+data <- read_csv('https://raw.githubusercontent.com/ecabestadistica/series-temporales-multivariantes/master/2.%20Casos%20de%20estudio%20en%20R/D.%20Comodities%20Oro%20y%20Plata/comodity_price.csv',
+                 col_types = cols(
+                  #                 date = col_double(),
+                                   gold = col_double(),
+                                   silver = col_double(),
+                                   plat = col_double(),
+                                   pall = col_double()
+                                   )
+                 )
+class(data)
+head(data)
+```
+
+## Graficando las series
+```{r}
+# Crear un lienzo para los 4 gráficos
+par(mfrow = c(2, 2))
+
+# Gráfico 1: Gold
+plot(data$gold, main = "Gold Prices", ylab = "Price", type = "l", col = "gold")
+
+# Gráfico 2: Silver
+plot(data$silver, main = "Silver Prices", ylab = "Price", type = "l", col = "green")
+
+# Gráfico 3: Platinum
+plot(data$plat, main = "Platinum Prices", ylab = "Price", type = "l", col = "purple")
+
+# Gráfico 4: Palladium
+plot(data$pall, main = "Palladium Prices", ylab = "Price", type = "l", col = "orange")
+```
+
+
+## Crear las series de tipo ts
+```{r}
+# aplicando transformacion logaritmica
+gold <- ts(log(data$gold),start=c(1993,11),frequency=12)
+silver <- ts(log(data$silver),start=c(1993,11),frequency=12)
+plat <- ts(log(data$plat),start=c(1993,11),frequency=12)
+pall <- ts(log(data$pall),start=c(1993,11),frequency=12)
+```
+
+
+## Graficar Gold y Silver
+```{r}
+par(mfrow=c(1,1))
+plot.ts(cbind(gold,silver), plot.type="single", ylab="",col = 4:3)
+legend("topleft",legend=c("gold","silver"),col=4:3,lty=1,bty='n')
+
+```
+
+## Una sola serie con las dos
+```{r}
+data <- ts.union(gold,silver)
+```
+
+
+## Prueba estacionariedad
+
+H0: No estacionaria
+H1: Estacionaria
+```{r}
+library(tseries)
+apply(data, 2, adf.test) #2 para especificar que lo queremos aplicar por columnas
+
+```
+Los resultados indican que las series no son estacionarias.
+
+## Diferenciando las series
+```{r}
+library(MTS)
+stnry = diffM(data)
+```
+
+## Volviendo a hacer el test:
+```{r}
+apply(stnry, 2, adf.test)
+```
+Las series son estacionarias (p < 0.05)
+
+
+```{r}
+plot.ts(stnry)
+```
+
+## Identificación del orden del modelo
+```{r}
+library(vars)
+VARselect(stnry, type = "none", lag.max = 10)
+```
+
+## Creando el modelo
+```{r}
+
+var.a <- vars::VAR(stnry,
+                   
+                   lag.max = 10,
+                   
+                   ic = "AIC",
+                   
+                   type = "none")
+
+summary(var.a)
+```
+
+
+## Diagnosis del modelo (Portmanteau test para objetos var)
+
+h0: no hay autocorrelación en los residuos de la serie temporal
+h1: existen autocorrelaciones significativas en los residuos de la serie temporal
+```{r}
+bv.serial=serial.test(var.a)
+bv.serial
+```
+
+
+```{r}
+plot(bv.serial, names = "gold")
+plot(bv.serial, names = "silver")
+```
+
+
+## Forecasting usando el modelo VAR
+```{r}
+fcast = predict(var.a, n.ahead = 20)
+plot(fcast)
+```
+
+## Forecast solo para gold
+```{r}
+# guardar la serie de tiempo
+gold = fcast$fcst[1]; gold 
+
+# Extrayendo la columna de pronósticos
+x = gold$gold[,1]; x
+```
+### Invirtiendo la diferenciación
+
+```{r}
+tail(data)
+```
+
+```{r}
+x = cumsum(x) + 7.424118
+
+plot.ts(x)
+```
+
+## Combinando los datos reales y la predicción en una sola serie de tiempo
+```{r}
+goldinv =ts(c(data[,1], x),
+           start = c(1993,11), frequency = 12)
+```
+
+
+## Dibujando todo 
+```{r}
+plot(goldinv)
+plot.ts(goldinv[200:261])
+```
+## Plot avanzado con separación visual entre lo real y lo pronosticado
+```{r}
+library(lattice)
+library(grid)
+library(zoo)
+```
+
+## Objeto zoo
+```{r}
+# realizado un zoom
+xx = zoo(goldinv[200:251]) # reservamos 52 datos (30 reales + 22 pred)
+```
+
+```{r}
+xyplot(xx, grid=TRUE, panel = function(xx, y, ...){
+  
+  panel.xyplot(xx, y, col="red", ...)
+  
+  grid.clip(unit(21, "native"), just=c("right")) # añadimos 22-1 datos reales y el resto
+  
+  panel.xyplot(xx, y, col="green", ...) })
+```
+
+## Forecast silver
+```{r}
+fcast = predict(var.a, n.ahead = 30)
+```
+
+## Solo para silver
+```{r}
+silver = fcast$fcst[2]; silver 
+```
+
+## Extrayendo la columna de pronósticos
+```{r}
+y = silver$silver[,1]; y
+```
+
+## Invirtiendo la diferenciación
+```{r}
+tail(data)
+
+y = cumsum(y) + 3.411313
+
+plot.ts(y)
+```
+
+## Combinando los datos reales y la predicción en una sola serie de tiempo
+```{r}
+silverinv =ts(c(data[,2], y),
+            start = c(1993,11), frequency = 12)
+```
+
+
+## Dibujando todo 
+```{r}
+plot(silverinv)
+plot.ts(silverinv[200:261])
+```
+
+
+## Plot avanzado con separación visual entre lo real y lo pronosticado
+```{r}
+library(lattice)
+library(grid)
+library(zoo)
+```
+
+
+```{r}
+## Objeto zoo
+xx = zoo(silverinv[200:261])
+```
+
+
+```{r}
+# En el parámetro grid.clip ponemos la cantidad de observaciones que son reales dentro de las 
+# que hemos elegido. Hemos cogido 62 de las que 30 son pronósticos, así que grid.clip sería 32-1
+
+xyplot(xx, grid=TRUE, panel = function(xx, y, ...){
+  
+  panel.xyplot(xx, y, col="red", ...)
+  
+  grid.clip(unit(31, "native"), just=c("right")) 
+  
+  panel.xyplot(xx, y, col="green", ...) })
+
+```
+
+
+
+
+
