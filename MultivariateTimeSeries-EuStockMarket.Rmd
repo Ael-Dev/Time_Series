@@ -1,0 +1,288 @@
+---
+title: "Análisis de los indices del mercado financiero europeo"
+output:
+  html_document:
+    df_print: paged
+  pdf_document: default
+---
+
+By: Ael-Dev
+
+
+## Descripción:
+
+Contains the daily closing prices of major European stock indices: Germany DAX (Ibis), Switzerland SMI, France CAC, and UK FTSE. The data are sampled in business time, i.e., weekends and holidays are omitted
+
+## Leer dataset
+
+```{r}
+data(EuStockMarkets)
+head(EuStockMarkets)
+class(EuStockMarkets)
+```
+
+
+```{r}
+frequency(EuStockMarkets)
+```
+
+
+```{r}
+start(EuStockMarkets)
+```
+
+## Análisis exploratorio
+```{r}
+# Crear un lienzo para los 4 gráficos
+par(mfrow = c(2, 2))
+
+# Gráfico 1: Gold
+plot(EuStockMarkets[, "DAX"], main = "DAX", ylab = "Price", type = "l", col = "gold")
+
+# Gráfico 2: Silver
+plot(EuStockMarkets[, "SMI"], main = "SMI", ylab = "Price", type = "l", col = "green")
+
+# Gráfico 3: Platinum
+plot(EuStockMarkets[, "CAC"], main = "CAC", ylab = "Price", type = "l", col = "purple")
+
+# Gráfico 4: Palladium
+plot(EuStockMarkets[, "FTSE"], main = "FTSE", ylab = "Price", type = "l", col = "orange")
+```
+
+```{r}
+# Con autoplot:
+library(ggplot2)
+library(ggfortify)
+
+autoplot(EuStockMarkets)
+```
+
+## Dividir la serie en conjunto de entrenamiento y de prueba
+```{r}
+library(dplyr)
+n_obs=30
+end=dim(EuStockMarkets)[1]
+X_train = EuStockMarkets[1:(end-n_obs),]
+X_test = EuStockMarkets[(end-n_obs+1):end,]
+dim(X_test)
+```
+
+## Prueba de estacionariedad
+
+H0 (Hipótesis Nula): La serie temporal es no estacionaria, lo que implica que tiene una raíz unitaria.
+
+H1 (Hipótesis Alternativa): La serie temporal es estacionaria, lo que significa que no tiene una raíz unitaria.
+
+```{r}
+library(tseries)
+apply(X_train, 2, adf.test) #2 para especificar que lo queremos aplicar por columnas
+```
+
+Dado que todos los p-values son > 0.05, se rechaza h1, por lo que se sugiere diferenciar las series
+
+## Diferenciando todo la mts 
+```{r}
+library(MTS)
+stnry = diffM(X_train)
+
+```
+
+
+```{r}
+## Aplicando el test:
+apply(stnry, 2, adf.test)
+```
+
+Dado que todos los p-values son < 0.05, se acepta h1, esto quiere decir que todas las series son estacionarias
+
+## VAR modeling
+```{r}
+plot.ts(stnry) # plot de las series diferenciadas
+
+```
+
+Se observa que las series lucen como una serie estacionaria.
+
+### Identificación del orden del modelo
+```{r}
+
+library(vars)
+VARselect(stnry, type = "none", lag.max = 10)
+
+```
+
+Según el criterio AIC sugiere un modelo de orden 9
+
+### Creando el modelo
+```{r}
+var.a <- vars::VAR(stnry,
+                   
+                   lag.max = 10,
+                   
+                   ic = "AIC",
+                   
+                   type = "none")
+
+summary(var.a)
+```
+
+
+### Causalidad de Granger
+```{r}
+causality(var.a, cause = c("DAX"))
+causality(var.a, cause = c("SMI"))
+causality(var.a, cause = c("CAC"))
+causality(var.a, cause = c("FTSE"))
+```
+Se observa que los p-values son < 0.05, por lo que rechazamos H0: No instantaneous causality between: DAX and SMI CAC FTSE (la variable estudiada no causa a las demás), segun el resultado observamos que cada serie causa a las demás.
+
+### Diagnosis del modelo (Portmanteau test para objetos var)
+
+verificando si existe autocorrelacion entre los residuos
+
+ - H0 (Hipótesis Nula): Los residuos son independientes (ruido blanco).
+ - H1 (Hipótesis Alternativa): Los residuos no son independientes y presentan autocorrelación.
+
+Nota: si P-value < 0.05 => rechazar h0, Esto significa que los residuos del modelo no son completamente aleatorios, sugiriendo que el modelo podría no estar capturando toda la información predictiva en los datos, y podrían existir autocorrelaciones en los residuos.
+```{r}
+
+serial.test(var.a)
+```
+El p-value es < 0.05, se desea obtener un p-valor > 0.05, por lo que se sugiere lo siguiente:
+
+Posibles soluciones:
+  a) Cambiar el orden del modelo.
+  b) Cambiar el tipo de modelo.
+  c) Añadir otro paso de diferenciación o transformar con logaritmos.
+  
+
+Estos modelos son a menudo tan complejos que no se puede alcanzar un resultado completamente 
+satisfactorio sin cambiar mucho los datos con logaritmos o varios pasos de diferencias.
+
+
+## Forecasting usando el modelo VAR (Hallando los pronósticos)
+```{r}
+# Adjust the margins to reduce the size
+par(mar = c(4, 2, 2, 3) + 0.1)
+
+# Generate the forecast
+fcast = predict(var.a, n.ahead = 30)
+
+# Plot the forecast
+plot(fcast)
+```
+
+
+
+```{r}
+# Solo para DAX 
+DAX = fcast$fcst[1]; DAX 
+```
+
+```{r}
+# Extrayendo la columna de pronósticos
+x = DAX$DAX[,1]; x
+```
+
+## Invirtiendo la diferenciación
+```{r}
+
+tail(X_train)
+
+x = cumsum(x) + 5961.45
+
+plot.ts(x)
+```
+
+```{r}
+# Combinando los datos reales y la predicción en una sola serie de tiempo
+start(EuStockMarkets)
+frequency(EuStockMarkets)
+
+DAXinv =ts(c(X_train[,1], x),
+           start = c(1991,130), frequency = 260)
+
+# Dibujando todo 
+plot(DAXinv)
+plot.ts(DAXinv[1760:1860]) # zoom
+
+```
+
+```{r}
+# Plot avanzado con separación visual entre lo real y lo pronosticado
+library(lattice)
+library(grid)
+library(zoo)
+
+# Objeto zoo
+xx = zoo(DAXinv[1760:1860])
+
+# En el parámetro grid.clip ponemos la cantidad de observaciones que son reales dentro de las 
+# que hemos elegido. Hemos cogido 101 de las que 30 son pronósticos, así que grid.clip sería 71-1
+
+xyplot(xx, grid=TRUE, panel = function(xx, y, ...){
+  
+  panel.xyplot(xx, y, col="red", ...)
+  
+  grid.clip(unit(70, "native"), just=c("right")) 
+  
+  panel.xyplot(xx, y, col="green", ...) })
+
+# Como vemos si nos vamos demasiado lejos en el futuro se aplana la predicción
+```
+
+
+
+```{r}
+library(MTS)
+
+# Diferenciando la serie de tiempo multivariante
+stnry = diffM(X_train)
+
+# Ajustar un modelo VAR a la serie diferenciada
+var_model <- VAR(stnry, p = 10) # Ajusta 'p' según los criterios de selección de modelo
+
+# Generar pronósticos usando el modelo VAR
+fcast <- predict(var_model, n.ahead = n_obs)
+
+# Extraer los valores pronosticados para el índice DAX y revertir la diferenciación
+DAX_forecasted <- cumsum(fcast$fcst$DAX[, "fcst"]) + tail(X_train[, "DAX"], 1)
+
+# Combinar los valores reales del DAX y los pronosticados en un objeto de serie de tiempo
+DAX_combined <- ts(c(X_train[, "DAX"], DAX_forecasted), start = start(EuStockMarkets), frequency = frequency(EuStockMarkets))
+
+# Crear un objeto zoo para la serie combinada
+xx <- zoo(DAX_combined[1760:1860])
+
+# Graficar los valores reales y pronosticados con una separación visual
+xyplot(xx, grid = TRUE, panel = function(x, y, ...) {
+    # Graficar los valores reales en azul
+    panel.xyplot(x[1:(length(x) - n_obs)], y[1:(length(y) - n_obs)], col = "blue", ...)
+    
+    # Graficar los valores pronosticados en rojo
+    panel.xyplot(x[(length(x) - n_obs + 1):length(x)], y[(length(y) - n_obs + 1):length(y)], col = "red", ...)
+})
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
